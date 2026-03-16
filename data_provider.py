@@ -1,3 +1,4 @@
+# data_provider.py
 from __future__ import annotations
 
 from dataclasses import replace
@@ -18,13 +19,23 @@ from models import (
 T = TypeVar("T")
 
 
+class DataError(Exception):
+    """Generic data-layer error (wraps DB exceptions if you want to catch them)."""
+
+
+class NotFoundError(DataError):
+    """Raised when an update/delete targets a row that does not exist."""
+
+
 class DataProvider:
     """
-    Refinements vs earlier version:
-      - Ensures SELECTs don't leave long-running transactions open when autocommit=False
-      - UPDATE methods no longer return False when row exists but values didn't change
-      - Dedupes long ApplicationStatus JOIN SQL
-      - Adds small internal read helpers to reduce repetition (no new public features)
+    DataProvider - data access layer.
+
+    Contract changes (error handling):
+      - CreateX(...) -> returns created object (unchanged)
+      - ReadXByID(...) -> returns object or None (unchanged)
+      - UpdateX(...) -> raises NotFoundError if target does not exist; returns None on success
+      - DeleteX(...) -> raises NotFoundError if target does not exist; returns None on success
     """
 
     # Shared SELECT for ApplicationStatus object reconstruction
@@ -83,13 +94,18 @@ class DataProvider:
         database: str,
         port: int = 3306,
     ) -> None:
-        self._conn: MySQLConnection = mysql.connector.connect(
-            host=host,
-            user=user,
-            password=password,
-            database=database,
-            port=port,
-        )
+        try:
+            self._conn: MySQLConnection = mysql.connector.connect(
+                host=host,
+                user=user,
+                password=password,
+                database=database,
+                port=port,
+            )
+        except Exception as e:
+            # Wrap low level connection exceptions
+            raise DataError("Failed to connect to database") from e
+
         # Keeping your original design (explicit commit/rollback).
         self._conn.autocommit = False
 
@@ -128,7 +144,6 @@ class DataProvider:
         finally:
             cur.close()
             # IMPORTANT refinement: close the read-only transaction.
-            # (Prevents long-running transactions during console use.)
             if not self._conn.autocommit:
                 try:
                     self._conn.rollback()
@@ -136,22 +151,23 @@ class DataProvider:
                     pass
 
     def _execute_write(self, sql: str, params: tuple[Any, ...] = ()) -> int:
+        """
+        Execute INSERT and return lastrowid. Wrap DB-level exceptions in DataError.
+        """
         cur = self._conn.cursor()
         try:
             cur.execute(sql, params)
             self._conn.commit()
             return int(cur.lastrowid or 0)
-        except Exception:
+        except Exception as e:
             self._conn.rollback()
-            raise
+            raise DataError("Database write failed") from e
         finally:
             cur.close()
 
     def _execute_update_delete(self, sql: str, params: tuple[Any, ...] = ()) -> int:
         """
-        Returns rowcount so callers can distinguish:
-          - 0 rows matched (not found) vs
-          - 0 rows changed (values identical)
+        Returns rowcount. Wrap DB-level exceptions in DataError.
         """
         cur = self._conn.cursor()
         try:
@@ -159,9 +175,9 @@ class DataProvider:
             rc = int(cur.rowcount or 0)
             self._conn.commit()
             return rc
-        except Exception:
+        except Exception as e:
             self._conn.rollback()
-            raise
+            raise DataError("Database update/delete failed") from e
         finally:
             cur.close()
 
@@ -305,7 +321,7 @@ class DataProvider:
         """
         return self._read_many(sql, self._company_from_row)
 
-    def UpdateCompany(self, company: Company) -> bool:
+    def UpdateCompany(self, company: Company) -> None:
         if company.company_id is None:
             raise ValueError("UpdateCompany requires company.company_id to be set.")
         sql = """
@@ -314,15 +330,15 @@ class DataProvider:
             WHERE company_id = %s
         """
         rc = self._execute_update_delete(sql, (company.name, company.website, company.company_location, company.company_id))
-        if rc > 0:
-            return True
-        # rc==0 can mean "not found" OR "no changes"
-        return self._exists("company", "company_id", company.company_id)
+        if rc == 0:
+            # Row not found
+            raise NotFoundError(f"Company id={company.company_id} not found")
 
-    def DeleteCompany(self, company_id: int) -> bool:
+    def DeleteCompany(self, company_id: int) -> None:
         sql = "DELETE FROM company WHERE company_id = %s"
         rc = self._execute_update_delete(sql, (company_id,))
-        return rc > 0
+        if rc == 0:
+            raise NotFoundError(f"Company id={company_id} not found")
 
     # ============================================================
     # 2) CONTACT CRUD
@@ -354,7 +370,7 @@ class DataProvider:
         """
         return self._read_many(sql, self._contact_from_row)
 
-    def UpdateContact(self, contact: Contact) -> bool:
+    def UpdateContact(self, contact: Contact) -> None:
         if contact.contact_id is None:
             raise ValueError("UpdateContact requires contact.contact_id to be set.")
         sql = """
@@ -379,14 +395,14 @@ class DataProvider:
                 contact.contact_id,
             ),
         )
-        if rc > 0:
-            return True
-        return self._exists("contact", "contact_id", contact.contact_id)
+        if rc == 0:
+            raise NotFoundError(f"Contact id={contact.contact_id} not found")
 
-    def DeleteContact(self, contact_id: int) -> bool:
+    def DeleteContact(self, contact_id: int) -> None:
         sql = "DELETE FROM contact WHERE contact_id = %s"
         rc = self._execute_update_delete(sql, (contact_id,))
-        return rc > 0
+        if rc == 0:
+            raise NotFoundError(f"Contact id={contact_id} not found")
 
     # ============================================================
     # 3) JOB_POSTING CRUD
@@ -427,7 +443,7 @@ class DataProvider:
         """
         return self._read_many(sql, self._job_posting_from_row)
 
-    def UpdateJobPosting(self, job: JobPosting) -> bool:
+    def UpdateJobPosting(self, job: JobPosting) -> None:
         if job.job_id is None:
             raise ValueError("UpdateJobPosting requires job.job_id to be set.")
         sql = """
@@ -454,14 +470,14 @@ class DataProvider:
                 job.job_id,
             ),
         )
-        if rc > 0:
-            return True
-        return self._exists("job_posting", "job_id", job.job_id)
+        if rc == 0:
+            raise NotFoundError(f"JobPosting id={job.job_id} not found")
 
-    def DeleteJobPosting(self, job_id: int) -> bool:
+    def DeleteJobPosting(self, job_id: int) -> None:
         sql = "DELETE FROM job_posting WHERE job_id = %s"
         rc = self._execute_update_delete(sql, (job_id,))
-        return rc > 0
+        if rc == 0:
+            raise NotFoundError(f"JobPosting id={job_id} not found")
 
     # ============================================================
     # 4) APPLICATION CRUD
@@ -490,7 +506,7 @@ class DataProvider:
         """
         return self._read_many(sql, self._application_from_row)
 
-    def UpdateApplication(self, app: Application) -> bool:
+    def UpdateApplication(self, app: Application) -> None:
         if app.application_id is None:
             raise ValueError("UpdateApplication requires app.application_id to be set.")
         sql = """
@@ -506,14 +522,14 @@ class DataProvider:
             sql,
             (app.job_id, app.applied_date, app.source, app.priority, app.resume, app.application_id),
         )
-        if rc > 0:
-            return True
-        return self._exists("application", "application_id", app.application_id)
+        if rc == 0:
+            raise NotFoundError(f"Application id={app.application_id} not found")
 
-    def DeleteApplication(self, application_id: int) -> bool:
+    def DeleteApplication(self, application_id: int) -> None:
         sql = "DELETE FROM application WHERE application_id = %s"
         rc = self._execute_update_delete(sql, (application_id,))
-        return rc > 0
+        if rc == 0:
+            raise NotFoundError(f"Application id={application_id} not found")
 
     # ============================================================
     # 5) APPLICATION_STATUS CRUD
@@ -546,7 +562,7 @@ class DataProvider:
         rows = self._execute(sql, fetchall=True) or []
         return [self._application_status_from_join_row(r) for r in rows]
 
-    def UpdateApplicationStatus(self, status: ApplicationStatus) -> bool:
+    def UpdateApplicationStatus(self, status: ApplicationStatus) -> None:
         if status.status_id is None:
             raise ValueError("UpdateApplicationStatus requires status.status_id to be set.")
         if status.application.application_id is None:
@@ -567,11 +583,11 @@ class DataProvider:
             sql,
             (status.application.application_id, contact_id, status.status.value, status.status_id),
         )
-        if rc > 0:
-            return True
-        return self._exists("application_status", "status_id", status.status_id)
+        if rc == 0:
+            raise NotFoundError(f"ApplicationStatus id={status.status_id} not found")
 
-    def DeleteApplicationStatus(self, status_id: int) -> bool:
+    def DeleteApplicationStatus(self, status_id: int) -> None:
         sql = "DELETE FROM application_status WHERE status_id = %s"
         rc = self._execute_update_delete(sql, (status_id,))
-        return rc > 0
+        if rc == 0:
+            raise NotFoundError(f"ApplicationStatus id={status_id} not found")
