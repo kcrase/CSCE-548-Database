@@ -1,22 +1,24 @@
-# business_manager.py
+# app/business_manager.py
 from typing import Optional, List
 
-from data_provider import DataProvider
-from models import Company, Contact, JobPosting, Application, ApplicationStatus
+from app.data_provider import DataProvider
+from app.models import Company, Contact, JobPosting, Application, ApplicationStatus
 
-def _is_new_id(val: Optional[int]) -> bool:
+
+def _is_new(val: Optional[int]) -> bool:
     return val is None or val == 0
+
 
 class BusinessManager:
     def __init__(self, provider: DataProvider):
         self._dp = provider
 
-    # Company
+    # ── Company ───────────────────────────────────────────────────────────────
+
     def save_company(self, company: Company) -> Company:
-        if _is_new_id(company.company_id):
-            company = self._dp.CreateCompany(company)
-        else:
-            self._dp.UpdateCompany(company)
+        if _is_new(company.company_id):
+            return self._dp.CreateCompany(company)
+        self._dp.UpdateCompany(company)
         return company
 
     def delete_company(self, company_id: int) -> None:
@@ -28,12 +30,12 @@ class BusinessManager:
     def get_all_companies(self) -> List[Company]:
         return self._dp.ReadAllCompanies()
 
-    # Contact
+    # ── Contact ───────────────────────────────────────────────────────────────
+
     def save_contact(self, contact: Contact) -> Contact:
-        if _is_new_id(contact.contact_id):
-            contact = self._dp.CreateContact(contact)
-        else:
-            self._dp.UpdateContact(contact)
+        if _is_new(contact.contact_id):
+            return self._dp.CreateContact(contact)
+        self._dp.UpdateContact(contact)
         return contact
 
     def delete_contact(self, contact_id: int) -> None:
@@ -45,12 +47,12 @@ class BusinessManager:
     def get_all_contacts(self) -> List[Contact]:
         return self._dp.ReadAllContacts()
 
-    # JobPosting
+    # ── JobPosting ────────────────────────────────────────────────────────────
+
     def save_job_posting(self, job: JobPosting) -> JobPosting:
-        if _is_new_id(job.job_id):
-            job = self._dp.CreateJobPosting(job)
-        else:
-            self._dp.UpdateJobPosting(job)
+        if _is_new(job.job_id):
+            return self._dp.CreateJobPosting(job)
+        self._dp.UpdateJobPosting(job)
         return job
 
     def delete_job_posting(self, job_id: int) -> None:
@@ -62,12 +64,12 @@ class BusinessManager:
     def get_all_job_postings(self) -> List[JobPosting]:
         return self._dp.ReadAllJobPostings()
 
-    # Application
+    # ── Application ───────────────────────────────────────────────────────────
+
     def save_application(self, app: Application) -> Application:
-        if _is_new_id(app.application_id):
-            app = self._dp.CreateApplication(app)
-        else:
-            self._dp.UpdateApplication(app)
+        if _is_new(app.application_id):
+            return self._dp.CreateApplication(app)
+        self._dp.UpdateApplication(app)
         return app
 
     def delete_application(self, application_id: int) -> None:
@@ -79,12 +81,12 @@ class BusinessManager:
     def get_all_applications(self) -> List[Application]:
         return self._dp.ReadAllApplications()
 
-    # ApplicationStatus
+    # ── ApplicationStatus ─────────────────────────────────────────────────────
+
     def save_application_status(self, status: ApplicationStatus) -> ApplicationStatus:
-        if _is_new_id(status.status_id):
-            status = self._dp.CreateApplicationStatus(status)
-        else:
-            self._dp.UpdateApplicationStatus(status)
+        if _is_new(status.status_id):
+            return self._dp.CreateApplicationStatus(status)
+        self._dp.UpdateApplicationStatus(status)
         return status
 
     def delete_application_status(self, status_id: int) -> None:
