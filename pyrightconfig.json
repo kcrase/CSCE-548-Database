@@ -1,0 +1,13 @@
+{
+  "include": [
+    "backend"
+  ],
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Windows",
+  "venvPath": ".",
+  "executionEnvironments": [
+    {
+      "root": "backend"
+    }
+  ]
+}
